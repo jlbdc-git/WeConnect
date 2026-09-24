@@ -17,6 +17,27 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  bool _signingOut = false;
+
+  Future<void> _signOut() async {
+    setState(() => _signingOut = true);
+    try {
+      await ref.read(authControllerProvider.notifier).signOut();
+      // The authStateProvider stream emission rebuilds the router and
+      // lands on /login. If this screen is still mounted after sign-out
+      // (e.g. the redirect is momentarily delayed), reflect it instead of
+      // leaving a dead authenticated screen behind.
+      if (mounted) setState(() => _signingOut = false);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Sign out failed: $e')),
+        );
+        setState(() => _signingOut = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final settingsAsync = ref.watch(settingsControllerProvider);
@@ -177,11 +198,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
             // ---- Sign out ----
             ListTile(
-              leading: const Icon(Icons.logout, color: Colors.red),
+              leading: _signingOut
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.logout, color: Colors.red),
               title: const Text('Sign out',
                   style: TextStyle(color: Colors.red)),
-              onTap: () =>
-                  ref.read(authControllerProvider.notifier).signOut(),
+              onTap: _signingOut ? null : _signOut,
             ),
           ],
         ),

@@ -28,12 +28,28 @@ class ServerRepository {
   Future<Server> create({required String name}) async {
     try {
       final uid = _client.auth.currentUser!.id;
+      if (uid.isEmpty) {
+        throw const AppException('auth_required',
+            message: 'Sign in to create a server.');
+      }
+      // The INSERT policy requires owner_id = auth.uid(); sending it
+      // explicitly makes any identity drift fail the guard above (a clean
+      // error) instead of RLS (42501).
       final data = await _client
           .from('servers')
           .insert({'name': name, 'owner_id': uid})
           .select()
           .single();
       return Server.fromJson(data);
+    } on PostgrestException catch (e) {
+      if (e.code == '42501') {
+        throw const AppException(
+          'server_forbidden',
+          message:
+              'Server rejected by policy. Sign out and back in, then try again.',
+        );
+      }
+      throw AppErrors.from(e, context: 'Failed to create server');
     } catch (e) {
       throw AppErrors.from(e, context: 'Failed to create server');
     }

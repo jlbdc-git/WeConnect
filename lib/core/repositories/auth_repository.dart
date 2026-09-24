@@ -63,7 +63,34 @@ class AuthRepository {
     }
   }
 
-  Future<void> signOut() => _client.auth.signOut();
+  /// Signs the user out of THIS session (SignOutScope.local) and revokes
+  /// the refresh token server-side.
+  ///
+  /// gotrue clears the local session and emits `signedOut` BEFORE calling
+  /// the revoke endpoint; if that call fails (offline, transient 5xx), it
+  /// rethrows even though the user is already signed out locally. We
+  /// swallow such failures so the UI always completes the sign-out, and we
+  /// double-check `currentSession` — re-removing it if the SDK kept any
+  /// stale session object alive — so the router can never see an
+  /// authenticated state after logout.
+  Future<void> signOut() async {
+    // Default scope is SignOutScope.local: only this session is revoked.
+    try {
+      await _client.auth.signOut();
+    } catch (_) {
+      // Server-side revoke failed (offline / transient). The local session
+      // is already cleared by the SDK in this case; make sure it stays so.
+    } finally {
+      if (_client.auth.currentSession != null) {
+        try {
+          await _client.auth.signOut();
+        } catch (_) {
+          // Last-resort retry failed too; the router treats "no session"
+          // as unauthenticated, and gotrue has already emitted signedOut.
+        }
+      }
+    }
+  }
 
   static String _mapAuthError(AuthException e) {
     final m = e.message.toLowerCase();

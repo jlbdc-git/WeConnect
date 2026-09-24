@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'auth_status_mapper.dart' show AuthStatus, authStatusFromEvent;
 import '../models/profile.dart';
 import '../repositories/auth_repository.dart';
 import '../repositories/friend_repository.dart';
@@ -71,26 +72,13 @@ final voiceServiceProvider = Provider<VoiceService>((ref) {
 // Auth state
 // ---------------------------------------------------------------------------
 
-/// Distinct app-level auth states (drives the router).
-enum AuthStatus { loading, authenticated, unauthenticated }
-
+/// App-level auth states (drives the router). Mapping logic lives in
+/// auth_status_mapper.dart so the logout contract is unit-testable.
 final authStateProvider = StreamProvider<AuthStatus>((ref) {
   final repo = ref.watch(authRepositoryProvider);
-  return repo.authState.map((event) {
-    // AuthChangeEvent.signedOut / tokenRemoved → unauthenticated.
-    // signedIn, initialSession with a session → authenticated.
-    final hasSession = repo.currentSession != null;
-    switch (event.event) {
-      case AuthChangeEvent.signedOut:
-        return AuthStatus.unauthenticated;
-      case AuthChangeEvent.initialSession:
-        return hasSession
-            ? AuthStatus.authenticated
-            : AuthStatus.unauthenticated;
-      default:
-        return hasSession ? AuthStatus.authenticated : AuthStatus.unauthenticated;
-    }
-  });
+  return repo.authState.map(
+    (event) => authStatusFromEvent(event.event, repo.currentSession != null),
+  );
 });
 
 /// Current user's profile.
