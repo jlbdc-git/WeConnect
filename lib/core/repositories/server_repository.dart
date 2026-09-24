@@ -22,7 +22,14 @@ class ServerRepository {
       }
 
       final uid = user.id;
+      final authContext =
+          await _client.rpc<Map<String, dynamic>>(
+        'debug_auth_context',
+      );
 
+      print('FLUTTER USER ID: $uid');
+      print('SUPABASE AUTH CONTEXT: $authContext');
+      
       final data = await _client
           .from('server_members')
           .select('server:servers!inner(*)')
