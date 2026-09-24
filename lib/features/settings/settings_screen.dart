@@ -48,8 +48,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         title: const Text('Settings'),
         leading: widget.onOpenFullSettings == null
             ? IconButton(
+                tooltip: 'Back',
                 icon: const Icon(Icons.arrow_back),
-                onPressed: () => context.pop(),
+                onPressed: () {
+                  // /settings is its own route: when opened directly
+                  // (deep link) there is nothing to pop — go home instead.
+                  if (context.canPop()) {
+                    context.pop();
+                  } else {
+                    context.go('/');
+                  }
+                },
               )
             : null,
       ),

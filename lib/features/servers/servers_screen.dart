@@ -2,19 +2,29 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/models/server.dart';
+import '../home/user_panel.dart';
 import '../servers/servers_controller.dart';
 import '../voice/voice_participants_list.dart';
 
 /// Vertical server rail (desktop).
+///
+/// Layout: [home/friends button] [server icons…] [flex gap] [pinned
+/// add/join button]. The add button is pinned to the BOTTOM so it stays in
+/// the same place with zero or many servers and never dominates the rail.
 class ServerRail extends ConsumerStatefulWidget {
   const ServerRail({
     super.key,
     required this.selectedServer,
     required this.onServerSelected,
+    this.onHomeSelected,
   });
 
   final Server? selectedServer;
   final ValueChanged<Server?> onServerSelected;
+
+  /// Invoked when the home (friends) button is tapped. Deselecting the
+  /// server (null) shows the friends home + empty-state sidebar.
+  final VoidCallback? onHomeSelected;
 
   @override
   ConsumerState<ServerRail> createState() => _ServerRailState();
@@ -25,6 +35,7 @@ class _ServerRailState extends ConsumerState<ServerRail> {
   Widget build(BuildContext context) {
     final serversAsync = ref.watch(serversControllerProvider);
     final theme = Theme.of(context);
+    final homeSelected = widget.selectedServer == null;
 
     return Container(
       width: 72,
@@ -32,35 +43,78 @@ class _ServerRailState extends ConsumerState<ServerRail> {
       child: Column(
         children: [
           const SizedBox(height: 12),
+          Tooltip(
+            message: 'Friends',
+            waitDuration: const Duration(milliseconds: 400),
+            child: _ServerIcon(
+              label: 'Friends',
+              icon: Icons.forum_outlined,
+              selected: homeSelected,
+              onTap: widget.onHomeSelected ??
+                  () => widget.onServerSelected(null),
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Divider(height: 8, indent: 16, endIndent: 16),
+          const SizedBox(height: 4),
           serversAsync.when(
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (e, _) => Expanded(
               child: Center(
                 child: IconButton(
+                  tooltip: 'Retry',
                   icon: const Icon(Icons.refresh),
                   onPressed: () => ref.invalidate(serversControllerProvider),
                 ),
               ),
             ),
             data: (servers) => Expanded(
-              child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                children: [
-                  for (final server in servers)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _ServerIcon(
-                        server: server,
-                        selected: widget.selectedServer?.id == server.id,
-                        onTap: () => widget.onServerSelected(server),
+              child: servers.isEmpty
+                  // Helpful empty state instead of a bare rail.
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Text(
+                          'No servers yet',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: theme.hintColor,
+                          ),
+                        ),
                       ),
+                    )
+                  : ListView(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      children: [
+                        for (final server in servers)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: _ServerIcon(
+                              label: server.name,
+                              monogram: server.name.isEmpty
+                                  ? '?'
+                                  : server.name[0].toUpperCase(),
+                              selected:
+                                  widget.selectedServer?.id == server.id,
+                              onTap: () => widget.onServerSelected(server),
+                            ),
+                          ),
+                      ],
                     ),
-                  IconButton(
-                    tooltip: 'Add / join server',
-                    icon: const Icon(Icons.add),
-                    onPressed: () => _showAddServerDialog(context),
-                  ),
-                ],
+            ),
+          ),
+          // Pinned add/join button (bottom of the rail, Discord-style).
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Tooltip(
+              message: 'Add / join server',
+              waitDuration: const Duration(milliseconds: 400),
+              child: _ServerIcon(
+                label: 'Add Server',
+                icon: Icons.add,
+                selected: false,
+                onTap: () => _showAddServerDialog(context),
               ),
             ),
           ),
@@ -126,32 +180,49 @@ class _ServerRailState extends ConsumerState<ServerRail> {
 
 class _ServerIcon extends StatelessWidget {
   const _ServerIcon({
-    required this.server,
+    required this.label,
     required this.selected,
     required this.onTap,
+    this.icon,
+    this.monogram,
   });
 
-  final Server server;
+  /// Tooltip/semantics label (e.g. server name or 'Add Server').
+  final String label;
+  final IconData? icon;
+  final String? monogram;
   final bool selected;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Material(
-      color: selected ? theme.colorScheme.primary : theme.cardTheme.color,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onTap,
+    return Tooltip(
+      message: label,
+      waitDuration: const Duration(milliseconds: 400),
+      child: Material(
+        color: selected ? theme.colorScheme.primary : theme.cardTheme.color,
         borderRadius: BorderRadius.circular(14),
-        child: SizedBox(
-          width: 48,
-          height: 48,
-          child: Center(
-            child: Text(
-              server.name.isEmpty ? '?' : server.name[0].toUpperCase(),
-              style: const TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.w700),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: SizedBox(
+            width: 48,
+            height: 48,
+            child: Center(
+              child: icon != null
+                  ? Icon(
+                      icon,
+                      size: 24,
+                      color: selected
+                          ? Colors.white
+                          : theme.colorScheme.onSurface,
+                    )
+                  : Text(
+                      monogram ?? '?',
+                      style: const TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.w700),
+                    ),
             ),
           ),
         ),
@@ -161,6 +232,8 @@ class _ServerIcon extends StatelessWidget {
 }
 
 /// Channel list for the selected server (desktop sidebar + mobile page).
+/// The [UserPanel] is pinned to the bottom so account access is always
+/// visible while a server is selected.
 class ChannelSidebar extends ConsumerStatefulWidget {
   const ChannelSidebar({
     super.key,
@@ -171,7 +244,8 @@ class ChannelSidebar extends ConsumerStatefulWidget {
 
   final Server server;
   final String? selectedChannelId;
-  final void Function(String channelId, bool isVoice) onChannelSelected;
+  final void Function(String channelId, bool isVoice, [String? name])
+      onChannelSelected;
 
   @override
   ConsumerState<ChannelSidebar> createState() => _ChannelSidebarState();
@@ -220,7 +294,22 @@ class _ChannelSidebarState extends ConsumerState<ChannelSidebar> {
             child: channelsAsync.when(
               loading: () =>
                   const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(child: Text('$e')),
+              error: (e, _) => Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('$e', textAlign: TextAlign.center),
+                    const SizedBox(height: 8),
+                    TextButton.icon(
+                      onPressed: () => ref
+                          .invalidate(channelsControllerProvider(
+                              widget.server.id)),
+                      icon: const Icon(Icons.refresh, size: 16),
+                      label: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ),
               data: (channels) {
                 final textChannels =
                     channels.where((c) => !c.isVoice).toList();
@@ -237,7 +326,7 @@ class _ChannelSidebarState extends ConsumerState<ChannelSidebar> {
                         selected:
                             widget.selectedChannelId == c.id,
                         onTap: () =>
-                            widget.onChannelSelected(c.id, false),
+                            widget.onChannelSelected(c.id, false, c.name),
                       ),
                     const SizedBox(height: 10),
                     _sectionLabel(context, 'VOICE CHANNELS'),
@@ -247,7 +336,7 @@ class _ChannelSidebarState extends ConsumerState<ChannelSidebar> {
                         label: c.name,
                         selected: widget.selectedChannelId == c.id,
                         onTap: () =>
-                            widget.onChannelSelected(c.id, true),
+                            widget.onChannelSelected(c.id, true, c.name),
                       ),
                       // Show participants under the voice channel.
                       VoiceChannelParticipants(channelId: c.id),
@@ -257,6 +346,10 @@ class _ChannelSidebarState extends ConsumerState<ChannelSidebar> {
               },
             ),
           ),
+          // Account panel pinned at the sidebar's bottom: always-visible
+          // access to settings/logout while a server is open.
+          const Divider(height: 1),
+          const UserPanel(),
         ],
       ),
     );
@@ -345,7 +438,8 @@ class ServersScreen extends ConsumerStatefulWidget {
   final Server? selectedServer;
   final String? selectedChannelId;
   final ValueChanged<Server?> onServerSelected;
-  final void Function(String channelId, bool isVoice) onChannelSelected;
+  final void Function(String channelId, bool isVoice, [String? name])
+      onChannelSelected;
 
   @override
   ConsumerState<ServersScreen> createState() => _ServersScreenState();
@@ -363,39 +457,74 @@ class _ServersScreenState extends ConsumerState<ServersScreen> {
         body: Center(child: Text('$e')),
       ),
       data: (servers) {
-        if (servers.isEmpty) {
+        // No server selected → show the SERVER LIST. The list stays the
+        // primary state; a server is only "entered" by tapping it, and its
+        // app bar has an explicit back button. (Previously the first server
+        // was auto-selected, making the list unreachable.)
+        if (widget.selectedServer == null) {
           return Scaffold(
             appBar: AppBar(title: const Text('Servers')),
-            body: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('No servers yet'),
-                  const SizedBox(height: 12),
-                  FilledButton(
-                    onPressed: () => _showAddDialog(context),
-                    child: const Text('Create or join one'),
-                  ),
-                ],
-              ),
-            ),
+            body: serversAsync.isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : servers.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('No servers yet'),
+                            const SizedBox(height: 12),
+                            FilledButton.icon(
+                              onPressed: () => _showAddDialog(context),
+                              icon: const Icon(Icons.add),
+                              label: const Text('Create Server'),
+                            ),
+                          ],
+                        ),
+                      )
+                    : ListView(
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        children: [
+                          for (final server in servers)
+                            ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor:
+                                    Theme.of(context).colorScheme.primary,
+                                child: Text(
+                                  server.name.isEmpty
+                                      ? '?'
+                                      : server.name[0].toUpperCase(),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ),
+                              title: Text(server.name),
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () => widget.onServerSelected(server),
+                            ),
+                          const SizedBox(height: 8),
+                          Padding(
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 16),
+                            child: OutlinedButton.icon(
+                              onPressed: () => _showAddDialog(context),
+                              icon: const Icon(Icons.add),
+                              label: const Text('Add Server'),
+                            ),
+                          ),
+                        ],
+                      ),
           );
         }
-        // Show the channel sidebar for the selected server full-screen.
-        // Auto-select the first server post-frame (never setState during build).
-        Server server;
-        if (widget.selectedServer == null) {
-          server = servers.first;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) widget.onServerSelected(server);
-          });
-        } else {
-          server = widget.selectedServer!;
-        }
+        // A server is open: full-screen channel sidebar with a back button
+        // that returns to the server list.
+        final server = widget.selectedServer!;
         return Scaffold(
           appBar: AppBar(
             title: Text(server.name),
             leading: IconButton(
+              tooltip: 'Back to servers',
               icon: const Icon(Icons.arrow_back),
               onPressed: () => widget.onServerSelected(null),
             ),

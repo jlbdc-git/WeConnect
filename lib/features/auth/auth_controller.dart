@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/errors/app_exception.dart';
+import '../../core/services/platform_service.dart';
 import '../../core/state/providers.dart';
 import '../friends/friends_controller.dart';
 import '../servers/servers_controller.dart';
@@ -48,7 +49,11 @@ class AuthController extends AutoDisposeAsyncNotifier<void> {
     // 2. Sign out (server revoke + local session removal).
     await ref.read(authRepositoryProvider).signOut();
 
-    // 3. Drop stale in-memory caches so a login by a different user can't
+    // 3. Remove the native PTT hook (Windows): it must never fire into a
+    //    signed-out session. (Best-effort; no-op on Android.)
+    await PlatformService.clearPttHook();
+
+    // 4. Drop stale in-memory caches so a login by a different user can't
     //    see the previous account's data; the authStateProvider stream
     //    emission rebuilds the router, which lands on /login.
     ref.invalidate(myProfileProvider);
