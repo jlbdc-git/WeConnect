@@ -22,14 +22,6 @@ class ServerRepository {
       }
 
       final uid = user.id;
-      final rlsDebug = await _client.rpc(
-        'debug_server_rls',
-        params: {
-          'p_owner_id': uid,
-        },
-      );
-
-      print('SERVER RLS DEBUG: $rlsDebug');
 
       final data = await _client
           .from('server_members')
@@ -44,7 +36,9 @@ class ServerRepository {
           )
           .toList();
     } catch (e) {
-      if (e is AppException) rethrow;
+      if (e is AppException) {
+        rethrow;
+      }
 
       throw AppErrors.from(
         e,
@@ -56,9 +50,6 @@ class ServerRepository {
   /// Creates a new server owned by the currently authenticated user.
   Future<Server> create({required String name}) async {
     try {
-      // ------------------------------------------------------------
-      // 1. Verify that the Flutter client has an authenticated user.
-      // ------------------------------------------------------------
       final user = _client.auth.currentUser;
 
       if (user == null) {
@@ -68,9 +59,6 @@ class ServerRepository {
         );
       }
 
-      // ------------------------------------------------------------
-      // 2. Verify that an active Supabase session exists.
-      // ------------------------------------------------------------
       final session = _client.auth.currentSession;
 
       if (session == null || session.accessToken.isEmpty) {
@@ -82,22 +70,15 @@ class ServerRepository {
       }
 
       final uid = user.id;
+      final serverName = name.trim();
 
-      // Temporary diagnostics.
-      // These are safe for development and help diagnose the 42501 error.
-      print('CREATE SERVER');
+      print('========== CREATE SERVER ==========');
       print('User ID: $uid');
-      print(
-        'Session exists: ${_client.auth.currentSession != null}',
-      );
+      print('Session exists: ${session != null}');
       print(
         'Access token exists: ${session.accessToken.isNotEmpty}',
       );
-
-      // ------------------------------------------------------------
-      // 3. Validate the server name.
-      // ------------------------------------------------------------
-      final serverName = name.trim();
+      print('Server name: [$serverName]');
 
       if (serverName.isEmpty) {
         throw const AppException(
@@ -106,15 +87,6 @@ class ServerRepository {
         );
       }
 
-      // ------------------------------------------------------------
-      // 4. Insert the server.
-      //
-      // Supabase RLS policy:
-      //
-      //   WITH CHECK (owner_id = auth.uid())
-      //
-      // Therefore owner_id MUST be the authenticated user's ID.
-      // ------------------------------------------------------------
       final data = await _client
           .from('servers')
           .insert({
@@ -124,21 +96,21 @@ class ServerRepository {
           .select()
           .single();
 
+      print('SERVER CREATED: $data');
+
       return Server.fromJson(data);
     } on PostgrestException catch (e) {
-      print('CREATE SERVER POSTGRES ERROR');
+      print('========== CREATE SERVER ERROR ==========');
       print('Code: ${e.code}');
       print('Message: ${e.message}');
       print('Details: ${e.details}');
       print('Hint: ${e.hint}');
 
-      // PostgreSQL RLS violation.
       if (e.code == '42501') {
         throw const AppException(
           'server_forbidden',
           message:
-              'Supabase rejected server creation because of its security policy. '
-              'Please sign out, sign back in, and try again.',
+              'Supabase rejected server creation because of its security policy.',
         );
       }
 
@@ -149,6 +121,8 @@ class ServerRepository {
     } on AppException {
       rethrow;
     } catch (e) {
+      print('CREATE SERVER UNKNOWN ERROR: $e');
+
       throw AppErrors.from(
         e,
         context: 'Failed to create server',
@@ -156,7 +130,7 @@ class ServerRepository {
     }
   }
 
-  /// Join via invite code.
+  /// Join a server using its invite code.
   Future<Server> joinByCode(String code) async {
     try {
       final user = _client.auth.currentUser;
@@ -172,6 +146,9 @@ class ServerRepository {
         'Access token exists: ${session?.accessToken.isNotEmpty ?? false}',
       );
 
+      // ------------------------------------------------------------
+      // 1. Make sure the user is authenticated.
+      // ------------------------------------------------------------
       if (user == null) {
         throw const AppException(
           'auth_required',
@@ -179,6 +156,9 @@ class ServerRepository {
         );
       }
 
+      // ------------------------------------------------------------
+      // 2. Make sure the Supabase session is still valid.
+      // ------------------------------------------------------------
       if (session == null || session.accessToken.isEmpty) {
         throw const AppException(
           'auth_required',
@@ -187,6 +167,9 @@ class ServerRepository {
         );
       }
 
+      // ------------------------------------------------------------
+      // 3. Normalize the invite code.
+      // ------------------------------------------------------------
       final cleanCode = code.trim().toUpperCase();
 
       if (cleanCode.isEmpty) {
@@ -198,6 +181,16 @@ class ServerRepository {
 
       print('Calling join_server_by_code with: [$cleanCode]');
 
+      // ------------------------------------------------------------
+      // 4. Ask PostgreSQL to find the server and add the user.
+      //
+      // The database function handles:
+      //
+      //   - invite-code lookup
+      //   - authentication check
+      //   - server membership creation
+      //   - returning the server ID
+      // ------------------------------------------------------------
       final serverId = await _client.rpc<String>(
         'join_server_by_code',
         params: {
@@ -207,6 +200,9 @@ class ServerRepository {
 
       print('JOIN SUCCESS - Server ID: $serverId');
 
+      // ------------------------------------------------------------
+      // 5. Load the server after successfully joining.
+      // ------------------------------------------------------------
       final data = await _client
           .from('servers')
           .select()
@@ -223,18 +219,28 @@ class ServerRepository {
       print('Details: ${e.details}');
       print('Hint: ${e.hint}');
 
-      if (e.message.contains('SERVER_NOT_FOUND')) {
+      final message = e.message;
+
+      if (message.contains('SERVER_NOT_FOUND')) {
         throw const AppException(
           'server_not_found',
           message: 'No server matches that invite code.',
         );
       }
 
-      if (e.message.contains('AUTH_REQUIRED')) {
+      if (message.contains('AUTH_REQUIRED')) {
         throw const AppException(
           'auth_required',
           message:
               'Your login session is not available. Please sign in again.',
+        );
+      }
+
+      if (e.code == '42501') {
+        throw const AppException(
+          'server_forbidden',
+          message:
+              'Supabase rejected the server join because of its security policy.',
         );
       }
 
@@ -254,10 +260,15 @@ class ServerRepository {
     }
   }
 
-  Future<void> leave(String serverId) =>
-      _safeRpc('leave_server', {
+  /// Leave a server.
+  Future<void> leave(String serverId) {
+    return _safeRpc(
+      'leave_server',
+      {
         'p_server_id': serverId,
-      });
+      },
+    );
+  }
 
   /// Loads all channels belonging to a server.
   Future<List<Channel>> listChannels(String serverId) async {
