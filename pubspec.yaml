@@ -1,0 +1,49 @@
+name: we_connect
+description: "WeConnect — a lightweight Discord-style chat and voice app for Windows and Android."
+
+environment:
+  sdk: '^3.10.8'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # Supabase: Auth + Postgres + Realtime (app data; NOT voice media)
+  supabase_flutter: ^2.17.2
+
+  # State management ( Riverpod 3)
+  riverpod: 2.6.1
+  flutter_riverpod: 2.6.1
+
+  # Misc utils
+  collection: ^1.19.1
+  intl: ^0.20.3
+  uuid: ^4.6.0
+  go_router: ^17.5.0
+  crypto: ^3.0.7
+  http: ^1.6.0
+
+  # Local storage
+  flutter_secure_storage: ^11.2.0
+  shared_preferences: ^2.5.5
+
+  # Voice (WebRTC + LiveKit SFU client)
+  flutter_webrtc: ^1.6.2+hotfix.3
+  livekit_client: ^2.13.0
+
+  # Platform integration
+  device_info_plus: ^13.2.0
+  path_provider: ^2.1.6
+  win32: ^6.4.0
+  ffi: ^2.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

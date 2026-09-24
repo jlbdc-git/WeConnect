@@ -1,0 +1,25 @@
+# LiveKit SFU configuration template (self-hosted, single node).
+# Copy to /etc/livekit.yaml on your VPS and fill in the placeholders.
+#
+# SECURITY: keys below are SERVER-SIDE only. The client receives a
+# short-lived room JWT minted by the voice-token edge function.
+
+port: 7880                # signaling WebSocket (HTTP)
+bind_addresses:
+  - "0.0.0.0"
+rtc:
+  tcp_port: 7881          # ICE/TCP fallback
+  port_range_start: 50000 # UDP media relay range
+  port_range_end: 60000
+  use_external_ip: true   # announce the public IP behind NAT
+turn:
+  enabled: true           # relay for symmetric NAT / restrictive networks
+  domain: turn.your-domain.com
+  # Let LiveKit manage certs (needs ports 80/443 reachable) or supply your own:
+  tls_port: 5349
+  udp_port: 3478
+keys:
+  # Generate: livekit-server generate-keys  (or any JWT-compatible secret)
+  devkey_yourkey: "yoursecret-keep-this-server-side-only"
+logging:
+  level: info

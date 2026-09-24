@@ -1,0 +1,30 @@
+# LiveKit SFU — single-node deployment template.
+#   cp livekit.yaml /etc/livekit.yaml   (fill in keys + domain)
+#   docker compose up -d
+#
+# Ports:
+#   443/tcp   signaling WebSocket behind Caddy/TLS (or 7880 direct, dev only)
+#   7881/tcp  ICE/TCP fallback
+#   50000-60000/udp  media
+#   3478/udp + 5349/tcp  TURN
+
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml
+    restart: unless-stopped
+    network_mode: host   # recommended for RTC; lets the process bind media ports directly
+    volumes:
+      - /etc/livekit.yaml:/etc/livekit.yaml:ro
+
+  # Optional: TLS termination in front of the signaling WebSocket if you
+  # prefer not to use LiveKit's built-in cert handling.
+  # caddy:
+  #   image: caddy:2
+  #   restart: unless-stopped
+  #   network_mode: host
+  #   volumes:
+  #     - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  #     - caddy_data:/data
+  # volumes:
+  #   caddy_data:
