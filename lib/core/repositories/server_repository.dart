@@ -160,6 +160,17 @@ class ServerRepository {
   Future<Server> joinByCode(String code) async {
     try {
       final user = _client.auth.currentUser;
+      final session = _client.auth.currentSession;
+
+      print('========== JOIN SERVER ==========');
+      print('Entered code: [$code]');
+      print('Trimmed code: [${code.trim()}]');
+      print('Uppercase code: [${code.trim().toUpperCase()}]');
+      print('User ID: ${user?.id}');
+      print('Session exists: ${session != null}');
+      print(
+        'Access token exists: ${session?.accessToken.isNotEmpty ?? false}',
+      );
 
       if (user == null) {
         throw const AppException(
@@ -168,7 +179,15 @@ class ServerRepository {
         );
       }
 
-      final cleanCode = code.trim();
+      if (session == null || session.accessToken.isEmpty) {
+        throw const AppException(
+          'auth_required',
+          message:
+              'Your login session is no longer valid. Please sign in again.',
+        );
+      }
+
+      final cleanCode = code.trim().toUpperCase();
 
       if (cleanCode.isEmpty) {
         throw const AppException(
@@ -177,6 +196,8 @@ class ServerRepository {
         );
       }
 
+      print('Calling join_server_by_code with: [$cleanCode]');
+
       final serverId = await _client.rpc<String>(
         'join_server_by_code',
         params: {
@@ -184,18 +205,36 @@ class ServerRepository {
         },
       );
 
+      print('JOIN SUCCESS - Server ID: $serverId');
+
       final data = await _client
           .from('servers')
           .select()
           .eq('id', serverId)
           .single();
 
+      print('SERVER LOADED: $data');
+
       return Server.fromJson(data);
     } on PostgrestException catch (e) {
+      print('========== JOIN SERVER ERROR ==========');
+      print('Code: ${e.code}');
+      print('Message: ${e.message}');
+      print('Details: ${e.details}');
+      print('Hint: ${e.hint}');
+
       if (e.message.contains('SERVER_NOT_FOUND')) {
         throw const AppException(
           'server_not_found',
           message: 'No server matches that invite code.',
+        );
+      }
+
+      if (e.message.contains('AUTH_REQUIRED')) {
+        throw const AppException(
+          'auth_required',
+          message:
+              'Your login session is not available. Please sign in again.',
         );
       }
 
@@ -206,6 +245,8 @@ class ServerRepository {
     } on AppException {
       rethrow;
     } catch (e) {
+      print('JOIN SERVER UNKNOWN ERROR: $e');
+
       throw AppErrors.from(
         e,
         context: 'Failed to join server',
