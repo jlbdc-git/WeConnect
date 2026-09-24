@@ -32,6 +32,9 @@ dependencies:
   # Voice (WebRTC + LiveKit SFU client)
   flutter_webrtc: ^1.6.2+hotfix.3
   livekit_client: ^2.13.0
+  # Declared for direct import (MediaStreamTrack type in voice_service);
+  # version follows livekit_client's own pin.
+  webrtc_interface: ^1.5.1
 
   # Platform integration
   device_info_plus: ^13.2.0

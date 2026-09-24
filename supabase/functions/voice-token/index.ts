@@ -250,8 +250,19 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   const now = Math.floor(Date.now() / 1000);
 
+  // Authoritative 20-user cap, enforced by the LiveKit server itself.
+  // The DB count above is advisory (fast reject); a roomConfig claim makes
+  // the limit race-free: even if two joins pass the count check
+  // simultaneously, LiveKit rejects the 21st participant at connect time.
+  const video = {
+    ...grants,
+    roomConfig: {
+      max_participants: MAX_VOICE_USERS,
+    },
+  };
+
   const token = await new SignJWT({
-    video: grants,
+    video,
     name: user.id,
   })
     .setProtectedHeader({

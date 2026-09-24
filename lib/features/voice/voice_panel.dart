@@ -26,22 +26,36 @@ class VoicePanel extends ConsumerStatefulWidget {
 }
 
 class _VoicePanelState extends ConsumerState<VoicePanel> {
+  String? _joinError;
+
   @override
   void initState() {
     super.initState();
     // Auto-join when the panel opens.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref
-          .read(voiceControllerProvider.notifier)
-          .join(widget.channelId, widget.serverId);
+      _join();
     });
   }
 
   @override
-  void dispose() {
-    // Leaving happens via the Leave button; auto-leave on dispose would
-    // fight re-renders, so it's explicit. (Discord behaves the same.)
-    super.dispose();
+  void didUpdateWidget(VoicePanel old) {
+    super.didUpdateWidget(old);
+    // Switching to a different voice channel joins the new one.
+    if (old.channelId != widget.channelId) {
+      _joinError = null;
+      _join();
+    }
+  }
+
+  Future<void> _join() async {
+    try {
+      await ref
+          .read(voiceControllerProvider.notifier)
+          .join(widget.channelId, widget.serverId);
+      if (mounted) setState(() => _joinError = null);
+    } catch (e) {
+      if (mounted) setState(() => _joinError = '$e');
+    }
   }
 
   @override
@@ -50,7 +64,7 @@ class _VoicePanelState extends ConsumerState<VoicePanel> {
     final state = voice.valueOrNull ?? const VoiceState();
     final settings = ref.watch(settingsControllerProvider).valueOrNull;
     final isPtt = settings?.voiceMode == VoiceMode.pushToTalk;
-    final isAndroid = !Platform.isAndroid ? false : true;
+    final isAndroid = Platform.isAndroid;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Voice Channel')),
@@ -59,14 +73,18 @@ class _VoicePanelState extends ConsumerState<VoicePanel> {
           children: [
             SizedBox(
               height: 96,
-              child: _ConnectionBar(state: state),
+              child: _ConnectionBar(
+                state: state,
+                joinError: _joinError,
+                onRetry: _joinError == null ? null : _join,
+              ),
             ),
             Expanded(
               child: _ParticipantGrid(state: state),
             ),
             if (isAndroid && isPtt)
-              _AndroidPttButton(state: state),
-            _VoiceControls(state: state, channelId: widget.channelId),
+              const _AndroidPttButton(),
+            _VoiceControls(state: state),
             const SizedBox(height: 12),
           ],
         ),
@@ -76,12 +94,33 @@ class _VoicePanelState extends ConsumerState<VoicePanel> {
 }
 
 class _ConnectionBar extends StatelessWidget {
-  const _ConnectionBar({required this.state});
+  const _ConnectionBar({required this.state, this.joinError, this.onRetry});
 
   final VoiceState state;
+  final String? joinError;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {
+    if (joinError != null) {
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.error_outline, size: 18, color: Colors.red.shade300),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              joinError!,
+              textAlign: TextAlign.center,
+              overflow: TextOverflow.ellipsis,
+              maxLines: 2,
+              style: TextStyle(color: Colors.red.shade300, fontSize: 12),
+            ),
+          ),
+          TextButton(onPressed: onRetry, child: const Text('Retry')),
+        ],
+      );
+    }
     final label = switch (state.connState) {
       VoiceConnState.connected => 'Voice connected',
       VoiceConnState.connecting => 'Connecting…',
@@ -115,10 +154,9 @@ class _ParticipantGrid extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final myId = ref.watch(supabaseClientProvider).auth.currentUser?.id ?? '';
     final profilesAsync = ref.watch(myProfileProvider);
-    final myName =
-        profilesAsync.valueOrNull?.effectiveName ?? 'You';
+    final myName = profilesAsync.valueOrNull?.effectiveName ?? 'You';
 
-    // Build a stable list: me + anyone speaking map reports.
+    // Build a stable list: me + anyone the speaking map reports.
     final entries = <_Participant>[
       _Participant(
         id: myId,
@@ -148,15 +186,15 @@ class _ParticipantGrid extends ConsumerWidget {
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: p.speaking
-                        ? Colors.green
-                        : Colors.transparent,
+                    color: p.speaking ? Colors.green : Colors.transparent,
                     width: 3,
                   ),
                 ),
                 child: CircleAvatar(
                   radius: 28,
-                  child: Text(p.name[0].toUpperCase()),
+                  child: Text(
+                    p.name.isNotEmpty ? p.name[0].toUpperCase() : '?',
+                  ),
                 ),
               ),
               const SizedBox(height: 6),
@@ -185,10 +223,9 @@ class _Participant {
 }
 
 class _VoiceControls extends ConsumerWidget {
-  const _VoiceControls({required this.state, required this.channelId});
+  const _VoiceControls({required this.state});
 
   final VoiceState state;
-  final String channelId;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -201,8 +238,7 @@ class _VoiceControls extends ConsumerWidget {
               ref.read(voiceControllerProvider.notifier).toggleMute(),
           icon: Icon(state.isMuted ? Icons.mic_off : Icons.mic),
           style: IconButton.styleFrom(
-            backgroundColor:
-                state.isMuted ? Colors.red.shade900 : null,
+            backgroundColor: state.isMuted ? Colors.red.shade900 : null,
           ),
         ),
         const SizedBox(width: 12),
@@ -210,12 +246,10 @@ class _VoiceControls extends ConsumerWidget {
           tooltip: state.isDeafened ? 'Undeafen' : 'Deafen',
           onPressed: () =>
               ref.read(voiceControllerProvider.notifier).toggleDeafen(),
-          icon: Icon(state.isDeafened
-              ? Icons.headset_off
-              : Icons.headset),
+          icon:
+              Icon(state.isDeafened ? Icons.headset_off : Icons.headset),
           style: IconButton.styleFrom(
-            backgroundColor:
-                state.isDeafened ? Colors.red.shade900 : null,
+            backgroundColor: state.isDeafened ? Colors.red.shade900 : null,
           ),
         ),
         const SizedBox(width: 12),
@@ -234,31 +268,48 @@ class _VoiceControls extends ConsumerWidget {
 }
 
 /// Android: large press-and-hold PTT button.
-class _AndroidPttButton extends ConsumerWidget {
-  const _AndroidPttButton({required this.state});
-
-  final VoiceState state;
+///
+/// Uses a Listener (pointer down/up/cancel) instead of long-press
+/// recognizers: transmission starts on finger-down, not ~500 ms later when
+/// the long-press timeout fires. The pressed notifier lives in State (not
+/// per build) so a rebuild can't lose it.
+class _AndroidPttButton extends ConsumerStatefulWidget {
+  const _AndroidPttButton();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final pressedNotifier = ValueNotifier<bool>(false);
+  ConsumerState<_AndroidPttButton> createState() => _AndroidPttButtonState();
+}
 
+class _AndroidPttButtonState extends ConsumerState<_AndroidPttButton> {
+  final ValueNotifier<bool> _pressed = ValueNotifier<bool>(false);
+
+  @override
+  void dispose() {
+    // Safety net: never leave the mic transmitting if the widget dies
+    // mid-press (e.g. navigation away while holding).
+    if (_pressed.value) {
+      ref.read(voiceControllerProvider.notifier).setPttPressed(false);
+    }
+    _pressed.dispose();
+    super.dispose();
+  }
+
+  void _setPressed(bool down) {
+    _pressed.value = down;
+    ref.read(voiceControllerProvider.notifier).setPttPressed(down);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = ref.watch(voiceControllerProvider).valueOrNull ??
+        const VoiceState();
     return ValueListenableBuilder<bool>(
-      valueListenable: pressedNotifier,
+      valueListenable: _pressed,
       builder: (context, pressed, _) {
-        return GestureDetector(
-          onLongPressStart: (_) {
-            pressedNotifier.value = true;
-            ref.read(voiceControllerProvider.notifier).setPttPressed(true);
-          },
-          onLongPressEnd: (_) {
-            pressedNotifier.value = false;
-            ref.read(voiceControllerProvider.notifier).setPttPressed(false);
-          },
-          onLongPressCancel: () {
-            pressedNotifier.value = false;
-            ref.read(voiceControllerProvider.notifier).setPttPressed(false);
-          },
+        return Listener(
+          onPointerDown: (_) => _setPressed(true),
+          onPointerUp: (_) => _setPressed(false),
+          onPointerCancel: (_) => _setPressed(false),
           child: Container(
             width: 132,
             height: 132,

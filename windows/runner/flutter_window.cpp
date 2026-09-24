@@ -27,7 +27,8 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
 
   // WeConnect: global PTT input hooks (keyboard + mouse, desktop-wide).
-  weconnect::RegisterPlatformChannels(flutter_controller_->engine());
+  weconnect::RegisterPlatformChannels(
+      flutter_controller_->engine()->messenger());
 
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
@@ -44,6 +45,10 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  // WeConnect: remove global input hooks before the engine dies so no
+  // hook callback can fire into a destroyed messenger.
+  weconnect::UnregisterPttHooks();
+
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

@@ -13,6 +13,13 @@ class FriendRepository {
 
   /// All friendships involving the current user, with the other user's
   /// embedded profile (single round trip, no N+1).
+  ///
+  /// NOTE: the hints must reference the FK constraints created in migration
+  /// 0001 (`friendships_requester_id_fkey` / `friendships_addressee_id_fkey`,
+  /// auto-named by Postgres from table + column). Both columns reference the
+  /// SAME table, so the unambiguous column-name hint (`profiles!requester_id`)
+  /// is not available — the constraint-name form is required and verified
+  /// against the migration.
   Future<List<FriendEntry>> listEntries(String viewerId) async {
     try {
       final data = await _client
@@ -35,9 +42,9 @@ class FriendRepository {
 
   /// Send a friend request.
   ///
-  /// Note on canonical ordering: the DB stores the pair with the
-  /// lexicographically smaller id in `requester_id` (a check constraint),
-  /// but the *insert* is still attributed to the sender by RLS.
+  /// Pair-uniqueness is enforced by the `friendships_pair_unique` expression
+  /// index (least/greatest); the true direction lives in the columns so RLS
+  /// knows who must accept.
   Future<void> sendRequest({required String toUserId}) async {
     try {
       final me = _client.auth.currentUser!.id;

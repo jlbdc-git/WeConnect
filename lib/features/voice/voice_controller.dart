@@ -59,14 +59,7 @@ class VoiceController extends AsyncNotifier<VoiceState> {
     });
 
     _stateSub ??= service.onConnState.listen((s) {
-      final cur = state.valueOrNull ?? const VoiceState();
-      state = AsyncData(cur.copyWith(
-        connState: s,
-        currentChannelId: service.currentChannelId,
-        currentServerId: service.currentServerId,
-        isMuted: service.isMuted,
-        isDeafened: service.isDeafened,
-      ));
+      state = AsyncData(_snapshot(service, connState: s));
     });
 
     _speakingSub ??= service.onSpeaking.listen((map) {
@@ -74,25 +67,42 @@ class VoiceController extends AsyncNotifier<VoiceState> {
       state = AsyncData(cur.copyWith(speaking: map));
     });
 
-    return VoiceState();
+    return _snapshot(service);
+  }
+
+  /// Single source of truth for deriving VoiceState from the service.
+  VoiceState _snapshot(VoiceService service, {VoiceConnState? connState}) {
+    return (state.valueOrNull ?? const VoiceState()).copyWith(
+      connState: connState ?? service.state,
+      currentChannelId: service.currentChannelId,
+      currentServerId: service.currentServerId,
+      isMuted: service.isMuted,
+      isDeafened: service.isDeafened,
+    );
   }
 
   Future<void> join(String channelId, String serverId) async {
+    final service = ref.read(voiceServiceProvider);
     final settings = ref.read(settingsControllerProvider).valueOrNull ??
         const UserSettings();
     try {
-      await ref.read(voiceServiceProvider).join(
-            channelId: channelId,
-            serverId: serverId,
-            pttMode: settings.voiceMode == VoiceMode.pushToTalk,
-            vadSensitivity: settings.vadSensitivity,
-            noiseSuppression: settings.noiseSuppression,
-            echoCancellation: settings.echoCancellation,
-            autoGainControl: settings.autoGainControl,
-          );
+      await service.join(
+        channelId: channelId,
+        serverId: serverId,
+        pttMode: settings.voiceMode == VoiceMode.pushToTalk,
+        vadSensitivity: settings.vadSensitivity,
+        noiseSuppression: settings.noiseSuppression,
+        echoCancellation: settings.echoCancellation,
+        autoGainControl: settings.autoGainControl,
+      );
       await PlatformService.setPttEnabled(
           settings.voiceMode == VoiceMode.pushToTalk);
     } catch (e) {
+      // Surface the failure in state (the panel shows it with a Retry).
+      state = AsyncData(
+        (state.valueOrNull ?? const VoiceState())
+            .copyWith(connState: VoiceConnState.failed),
+      );
       rethrow;
     }
   }
@@ -103,17 +113,15 @@ class VoiceController extends AsyncNotifier<VoiceState> {
   }
 
   Future<void> toggleMute() async {
-    await ref.read(voiceServiceProvider).setMuted(!ref.read(voiceServiceProvider).isMuted);
     final service = ref.read(voiceServiceProvider);
-    state = AsyncData((state.valueOrNull ?? const VoiceState())
-        .copyWith(isMuted: service.isMuted));
+    await service.setMuted(!service.isMuted);
+    state = AsyncData(_snapshot(service));
   }
 
   void toggleDeafen() {
     final service = ref.read(voiceServiceProvider);
     service.setDeafened(!service.isDeafened);
-    state = AsyncData((state.valueOrNull ?? const VoiceState())
-        .copyWith(isDeafened: service.isDeafened));
+    state = AsyncData(_snapshot(service));
   }
 
   void setPttPressed(bool down) =>

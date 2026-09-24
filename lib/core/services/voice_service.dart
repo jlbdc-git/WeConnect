@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:livekit_client/livekit_client.dart' as lk;
 import 'package:supabase_flutter/supabase_flutter.dart';
-
+import 'package:webrtc_interface/webrtc_interface.dart' show MediaStreamTrack;
 import '../errors/app_exception.dart';
 import 'voice_gate.dart';
 
@@ -21,6 +21,14 @@ enum VoiceConnState { disconnected, connecting, connected, reconnecting, failed 
 /// All audio flows through the SFU: each client publishes ONE track and
 /// receives N-1 (no mesh). Mute gates the local track; deafen disables
 /// remote publications. Both are instant local operations.
+///
+/// IMPORTANT: `stopAudioCaptureOnMute` is disabled. With the LiveKit
+/// default (true), a mute STOPS capture and destroys the underlying
+/// MediaStreamTrack; unmuting creates a NEW track, leaving our VoiceGate
+/// writing `enabled` into a dead track — PTT would keep transmitting.
+/// Keeping capture alive makes track identity stable for the gate's
+/// lifetime, and `track.enabled = false` is itself a real media gate
+/// (no frames are captured or sent).
 class VoiceService {
   VoiceService({required this.supabase, required String edgeFunctionBase})
       : _edgeBase = edgeFunctionBase;
@@ -32,7 +40,6 @@ class VoiceService {
   VoiceGate? _gate;
   final List<lk.CancelListenFunc> _cancelFns = [];
   bool _deafened = false;
-  String _liveKitUrl = '';
   VoiceConnState _state = VoiceConnState.disconnected;
   final _stateCtrl = StreamController<VoiceConnState>.broadcast();
   final _speakingCtrl = StreamController<Map<String, bool>>.broadcast();
@@ -79,6 +86,11 @@ class VoiceService {
             noiseSuppression: noiseSuppression,
             echoCancellation: echoCancellation,
             autoGainControl: autoGainControl,
+            // Keep the MediaStreamTrack alive across mute/unmute so the
+            // VoiceGate's `enabled` toggles always hit the live track.
+            // (See class doc: the LiveKit default creates a new track on
+            // unmute, which would silently break PTT.)
+            stopAudioCaptureOnMute: false,
           ),
         ),
       );
@@ -123,7 +135,8 @@ class VoiceService {
       final gate = VoiceGate(onSpeakingChanged: (_) => _emitSpeaking());
       gate.configure(pttMode: pttMode, vadSensitivity: vadSensitivity);
       final nativeTrack = pubs?.firstOrNull?.track?.mediaStreamTrack;
-      await gate.attach(nativeTrack == null ? null : _GateTrackAdapter(nativeTrack));
+      await gate
+          .attach(nativeTrack == null ? null : _GateTrackAdapter(nativeTrack));
       _gate = gate;
 
       // Mirror occupancy for other clients (Supabase Realtime).
@@ -134,6 +147,7 @@ class VoiceService {
       });
 
       _setState(VoiceConnState.connected);
+      _emitSpeaking();
     } on AppException {
       await _cleanup();
       rethrow;
@@ -188,6 +202,12 @@ class VoiceService {
   String? get _localIdentity =>
       supabase.auth.currentUser?.id ?? _room?.localParticipant?.identity;
 
+  void _setState(VoiceConnState s) {
+    if (_state == s) return;
+    _state = s;
+    _stateCtrl.add(s);
+  }
+
   // ---- token fetch ---------------------------------------------------------
   Future<_TokenInfo> _fetchToken(String channelId) async {
     final jwt = supabase.auth.currentSession?.accessToken;
@@ -206,22 +226,41 @@ class VoiceService {
             body: jsonEncode({'channel_id': channelId}),
           )
           .timeout(const Duration(seconds: 10));
+    } on TimeoutException {
+      throw const AppException('voice_unreachable',
+          message: 'Voice server timed out. Try again.');
     } catch (_) {
       throw const AppException('voice_unreachable',
           message: 'Voice server unreachable. Try again later.');
     }
 
-    final body = jsonDecode(res.body) as Map<String, dynamic>;
     if (res.statusCode != 200) {
+      final body = _decodeBody(res.body);
+      final code = body['error'] as String?;
+      if (res.statusCode == 409 ||
+          code == 'CHANNEL_FULL' ||
+          code == 'room is full') {
+        throw AppException(
+          'voice_channel_full',
+          message: 'That voice channel is full (20 max).',
+        );
+      }
       throw AppException(
         'voice_join_denied',
-        message: body['error'] as String? ?? 'Voice server rejected join.',
+        message: code ?? 'Voice server rejected join.',
       );
     }
-    _liveKitUrl = body['url'] as String? ?? _liveKitUrl;
+
+    final body = _decodeBody(res.body);
+    final token = body['token'] as String?;
+    final url = body['url'] as String?;
+    if (token == null || url == null || url.isEmpty) {
+      throw const AppException('voice_join_denied',
+          message: 'Voice server returned an incomplete response.');
+    }
     return _TokenInfo(
-      token: body['token'] as String,
-      url: _liveKitUrl,
+      token: token,
+      url: url,
       roomName: body['roomName'] as String? ?? 'wc_$channelId',
     );
   }
@@ -246,7 +285,9 @@ class VoiceService {
 
   Future<void> _cleanup() async {
     for (final cancel in _cancelFns) {
-      await cancel();
+      try {
+        await cancel();
+      } catch (_) {}
     }
     _cancelFns.clear();
     _gate?.dispose();
@@ -266,12 +307,6 @@ class VoiceService {
     _deafened = false;
   }
 
-  void _setState(VoiceConnState s) {
-    if (_state == s) return;
-    _state = s;
-    _stateCtrl.add(s);
-  }
-
   Future<void> dispose() async {
     await _cleanup();
     await _stateCtrl.close();
@@ -279,8 +314,16 @@ class VoiceService {
   }
 }
 
-class _TokenInfo {
-  const _TokenInfo({
+Map<String, dynamic> _decodeBody(String raw) {
+  try {
+    final decoded = jsonDecode(raw);
+    return decoded is Map<String, dynamic> ? decoded : const {};
+  } catch (_) {
+    return const {};
+  }
+}
+
+class _TokenInfo {  const _TokenInfo({
     required this.token,
     required this.url,
     required this.roomName,
@@ -294,16 +337,16 @@ class _TokenInfo {
 extension _FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
 }
-
 /// Adapts the flutter_webrtc MediaStreamTrack to the gate's minimal
-/// [GateTrack] interface (enabled flag only).
+/// [GateTrack] interface (enabled flag only). Typed via the
+/// webrtc_interface contract instead of `dynamic`.
 class _GateTrackAdapter implements GateTrack {
   _GateTrackAdapter(this._track);
 
-  final dynamic _track; // rtc.MediaStreamTrack (avoids importing flutter_webrtc)
+  final MediaStreamTrack _track;
 
   @override
-  bool get enabled => _track.enabled as bool;
+  bool get enabled => _track.enabled;
 
   @override
   set enabled(bool value) => _track.enabled = value;

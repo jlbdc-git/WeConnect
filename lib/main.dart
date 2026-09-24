@@ -7,7 +7,6 @@ import 'core/config/app_config.dart';
 import 'core/navigation/app_router.dart';
 import 'core/state/providers.dart';
 import 'core/theme/app_theme.dart';
-import 'core/utils/app_log.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -58,7 +57,3 @@ class WeConnectApp extends ConsumerWidget {
     );
   }
 }
-
-// Keep the logger referenced so tree shaking does not complain in dev builds.
-// ignore: unused_element
-void _logBootstrap() => AppLog.d('bootstrap complete');

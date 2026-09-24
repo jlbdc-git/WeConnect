@@ -9,8 +9,12 @@
 #include "win32_window.h"
 
 // WeConnect platform channels (global PTT hooks).
+namespace flutter {
+class BinaryMessenger;
+}
 namespace weconnect {
-void RegisterPlatformChannels(flutter::FlutterEngine* engine);
+void RegisterPlatformChannels(flutter::BinaryMessenger* messenger);
+void UnregisterPttHooks();
 }
 
 // A window that does nothing but host a Flutter view.
